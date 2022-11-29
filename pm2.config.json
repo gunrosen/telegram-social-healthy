@@ -1,0 +1,9 @@
+{
+  "apps": [
+    {
+      "name": "crawler",
+      "script": "./dist/crawler.js",
+      "watch": true
+    }
+  ]
+}
