@@ -1,0 +1,30 @@
+{
+  "name": "telegram-social-healthy",
+  "version": "1.0.0",
+  "description": "Check telegram social healthy",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/gunrosen/telegram-social-healthy.git"
+  },
+  "keywords": [
+    "telegram"
+  ],
+  "author": "hungp",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/gunrosen/telegram-social-healthy/issues"
+  },
+  "homepage": "https://github.com/gunrosen/telegram-social-healthy#readme",
+  "dependencies": {
+    "dotenv": "^16.0.3",
+    "pg": "^8.8.0",
+    "telegram": "^2.14.7"
+  },
+  "devDependencies": {
+    "typescript": "^4.9.3"
+  }
+}
