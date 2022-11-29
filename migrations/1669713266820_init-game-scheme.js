@@ -5,8 +5,7 @@ exports.shorthands = undefined;
 exports.up = pgm => {
     pgm.createTable('games', {
         id: 'id',
-        name: {type: 'varchar(1000)', notNull: true},
-        slug: {type: 'varchar(1000)', notNull: true},
+        slug: {type: 'varchar(1000)', unique: true, notNull: true},
         website: {type: 'varchar(1000)'},
         telegram_group: {type: 'varchar(1000)'},
         telegram_channel: {type: 'varchar(1000)'},
@@ -21,4 +20,5 @@ exports.up = pgm => {
 };
 
 exports.down = pgm => {
+    pgm.dropTable('games');
 };
