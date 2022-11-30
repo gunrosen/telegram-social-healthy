@@ -4,8 +4,10 @@
   "description": "Check telegram social health",
   "main": "index.js",
   "scripts": {
-    "updateGameInfo":  "nodemon src/updateGameInfo.ts",
-    "build": "rm -rf dist && tsc"
+    "updateGameInfo": "nodemon src/updateGameInfo.ts",
+    "build": "rm -rf dist && tsc",
+    "migrate": "node-pg-migrate",
+    "migrate-up": "node-pg-migrate up"
   },
   "repository": {
     "type": "git",
@@ -23,6 +25,7 @@
   "dependencies": {
     "dotenv": "^16.0.3",
     "input": "^1.0.1",
+    "node-pg-migrate": "^6.2.2",
     "nodemon": "^2.0.20",
     "pg": "^8.8.0",
     "telegram": "^2.14.7",
