@@ -2,7 +2,8 @@ import * as dotenv from 'dotenv'
 
 dotenv.config()
 import {Client} from 'pg'
-
+import {mockGameData} from './utils/mock'
+const isMock = true
 /*
   Get game information from core db (directus)
   Information contains of telegram group/channel mapping with game slug
@@ -19,13 +20,13 @@ const getGameInfo = async () => {
   try {
     await clientSource.connect()
     await client.connect()
-    const resGames = await clientSource.query('SELECT slug, name, links FROM games')
+    const resGames = isMock ? mockGameData : (await clientSource.query('SELECT slug, name, links FROM games')).rows
     let countInsert = 0, countUpdate = 0
-    for (const game of resGames.rows) {
+    for (const game of resGames) {
       const slug = game.slug
       const name = game.name
       const links = game.links
-      if (!links){
+      if (!links) {
         // skip
         console.log(`Skip slug: ${slug}`)
         continue
@@ -57,7 +58,7 @@ const getGameInfo = async () => {
         countUpdate++
       }
     }
-    console.log(`insert: ${countInsert} update:${countUpdate} total:${resGames.rows.length}`)
+    console.log(`insert: ${countInsert} update:${countUpdate} total:${resGames.length}`)
   } catch (e) {
     console.error(e)
   } finally {
