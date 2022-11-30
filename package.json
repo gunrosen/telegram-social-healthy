@@ -4,6 +4,7 @@
   "description": "Check telegram social health",
   "main": "index.js",
   "scripts": {
+    "getUserSessionKey": "nodemon src/getUserSessionKey.ts",
     "updateGameInfo": "nodemon src/updateGameInfo.ts",
     "build": "rm -rf dist && tsc",
     "migrate": "node-pg-migrate",
