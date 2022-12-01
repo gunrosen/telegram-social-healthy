@@ -6,6 +6,7 @@
   "scripts": {
     "getUserSessionKey": "nodemon src/getUserSessionKey.ts",
     "updateGameInfo": "nodemon src/updateGameInfo.ts",
+    "crawl": "nodemon src/crawl.ts",
     "build": "rm -rf dist && tsc",
     "migrate": "node-pg-migrate",
     "migrate-up": "node-pg-migrate up"
