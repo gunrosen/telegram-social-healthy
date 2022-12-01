@@ -66,8 +66,8 @@ const getGameInfo = async () => {
     for (const game of resGames) {
       const slug = game.slug
       // TODO: Assume a game have only one group and one channel. It should be update in the future
-      await upsertGamesCrawlInfo(client, clientTelegram, slug, TELEGRAM_TYPE.GROUP, game)
-      await upsertGamesCrawlInfo(client, clientTelegram, slug, TELEGRAM_TYPE.CHANNEL, game)
+      await upsertGamesCrawlInfo(client, clientTelegram, slug, TELEGRAM_TYPE.GROUP, game?.links.telegram)
+      await upsertGamesCrawlInfo(client, clientTelegram, slug, TELEGRAM_TYPE.CHANNEL, game?.links.telegramAnnouncementChannel)
     }
     console.log(`social_telegram insert: ${countInsert} update:${countUpdate} total:${resGames.length}`)
   } catch (e) {
@@ -106,9 +106,7 @@ const upsertGamesInfo = async (client: Client, name: string, slug: string, links
   }
 }
 
-const upsertGamesCrawlInfo = async (clientPg: Client, clientTelegram: TelegramClient, slug: string, type: string, gameInfo: any): Promise<any> => {
-  const links = gameInfo?.links
-  const link = type === TELEGRAM_TYPE.GROUP ? links?.telegram : links?.telegramAnnouncementChannel
+const upsertGamesCrawlInfo = async (clientPg: Client, clientTelegram: TelegramClient, slug: string, type: string, link: string): Promise<any> => {
   if (!link || !clientPg || !clientTelegram) {
     console.error(`upsertGamesCrawlInfo error: slug ${slug} type: ${type}`)
     return
