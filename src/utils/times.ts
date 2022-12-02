@@ -1,5 +1,6 @@
 // UTC
 const convertTimestamp = (timestamp: number): Date => {
+  if (timestamp === 0) return null
   let date = new Date(0);
   date.setUTCSeconds(timestamp)
   return date
@@ -20,6 +21,7 @@ const getLastMomentOfDate = (year: number, month: number, day: number): number =
 }
 
 const getIsoDate = (date: Date): string => {
+  if (!date) return ''
   return date.getUTCFullYear() + '-' + pad(date.getUTCMonth() + 1) + '-' + pad(date.getUTCDate())
 }
 

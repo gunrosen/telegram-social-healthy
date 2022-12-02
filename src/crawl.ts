@@ -24,6 +24,7 @@ import User = Api.User;
 import PeerChannel = Api.PeerChannel;
 import MessageService = Api.MessageService;
 import {wait} from "./utils/util";
+import ReactionCount = Api.ReactionCount;
 
 /*
   Get list of group/channel from telegrams table.
@@ -54,15 +55,15 @@ const crawl = async () => {
     }
     const resTelegramChannelGroup = (await clientPg.query('SELECT slug, type, link, bot FROM telegrams')).rows
     for (const cg of resTelegramChannelGroup) {
-      const {slug, type, bot} = cg
+      const {slug, type, bot, link} = cg
       let from = parseInt(await redis.get(`${type}:${slug}:latest`))
       let to = Math.floor(Date.now() / 1000)
-      if (type === TELEGRAM_TYPE.GROUP) {
-        await crawlGroup(clientPg, clientTelegram, redis, slug, 'https://t.me/test_group_hulk', bot, from, to)
-      } else if (type === TELEGRAM_TYPE.CHANNEL){
-
+      // if (type === TELEGRAM_TYPE.GROUP) {
+      //   await crawlGroup(clientPg, clientTelegram, redis, slug, 'https://t.me/test_group_hulk', bot, from, to)
+      // } else
+      if (type === TELEGRAM_TYPE.CHANNEL) {
+        await crawlChannel(clientPg, clientTelegram, redis, slug, link, from, to)
       }
-
     }
   } catch (err) {
     console.error(err)
@@ -78,7 +79,7 @@ Crawl with time range (from/to)
 const crawlGroup = async (clientPg: Client, clientTelegram: TelegramClient, redis: Redis, slug: string, link: string, bot: string, from: number, to: number): Promise<number> => {
   const now = Date.now()
   if (from > now) {
-    console.error(`From time is greater than now, from: ${from}`)
+    console.error(`crawlGroup: From time is greater than now, from: ${from}`)
     return
   }
   to = to > now ? now : to
@@ -143,7 +144,65 @@ const crawlGroup = async (clientPg: Client, clientTelegram: TelegramClient, redi
   await redis.set(`group:${slug}:latest`, to)
   return temp
 }
+const crawlChannel = async (clientPg: Client, clientTelegram: TelegramClient, redis: Redis, slug: string, link: string, from: number, to: number): Promise<number> => {
+  const now = Date.now()
+  if (from > now) {
+    console.error(`crawlChannel: From time is greater than now, from: ${from}`)
+    return
+  }
+  to = to > now ? now : to
+  let temp = to
+  let mapAggregation = new Map<string, ChannelAggregationByDay>()
+  do {
+    const history: TypeMessages = await clientTelegram.invoke(
+      new Api.messages.GetHistory({
+        peer: link,
+        offsetDate: temp,
+        limit: 100,
+      })
+    )
+    const msgArr = (history as ChannelMessages).messages.sort((a, b) => {
+      const msgA = a as Message
+      const msgB = b as Message
+      return (msgB.date || Number.MAX_SAFE_INTEGER) - (msgA.date || Number.MAX_SAFE_INTEGER)
+    })
+    for (const msg of msgArr) {
+      let date = 0
+      if (!(msg instanceof Api.MessageEmpty)) {
+        date = msg.date
+      }
+      // date is mandatory, if date does not set, just skip
+      if (date === 0) continue
 
+      // Messages are sorted desc by date.
+      if (date < from) {
+        temp = date
+        break
+      }
+      const isoDate = getIsoDate(convertTimestamp(date))
+      if (msg instanceof Message) {
+        const {message, id, postAuthor, editDate, views, forwards, replies, reactions} = msg
+        // Update aggregation of day
+        let agg: ChannelAggregationByDay = mapAggregation.get(isoDate) || new ChannelAggregationByDay()
+        agg.numberViews += views || 0
+        agg.numberForward += forwards || 0
+        agg.numberReply += replies?.replies || 0
+        agg.numberReaction += reactions?.results[0]?.count || 0
+        mapAggregation.set(isoDate, agg)
+
+        // Upsert Channel Message
+        await upsertChannelMessage(clientPg, slug, link, msg)
+      }
+    }
+    await wait(300)
+  } while (temp >= from)
+  console.log(`Latest message date : ${temp}`)
+  for (const [isoDate, agg] of mapAggregation) {
+    await upsertChannelLog(clientPg, slug, link, isoDate, agg)
+  }
+  await redis.set(`channel:${slug}:latest`, to)
+  return temp
+}
 
 // ---------------- PRIVATE ZONE ---------------------------------
 // MEDIA
@@ -263,6 +322,116 @@ const upsertGroupLog = async (clientPg: Client, slug: string, link: string, isoD
     }
     await clientPg.query(updateQuery)
   }
+}
+
+const upsertChannelMessage = async (clientPg: Client, slug: string, link: string, msg: Message) => {
+  const {message, id, postAuthor, editDate, views, forwards, replies, reactions, date} = msg
+  const publishedAt = convertTimestamp(date)
+  const lastEditAt = convertTimestamp(editDate)
+  const query = {
+    name: 'get-tele-channel-message',
+    text: 'SELECT * FROM telegram_channel_messages where slug = $1::text and id= $2',
+    values: [slug, id],
+    rowMode: 'array',
+  }
+  let existRecord = await clientPg.query(query)
+  if (existRecord.rows.length === 0) {
+    const insertQuery = {
+      name: 'insert-telegram-channel-message',
+      text: 'INSERT INTO telegram_channel_messages(slug, link, telegram_id, published_at, last_edit_at, ' +
+        'post_author, ' +
+        'message, ' +
+        'count_view, ' +
+        'count_reply, ' +
+        'count_forward, ' +
+        'count_reaction ' +
+        ' ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, $11)',
+      values: [
+        slug, link, id, publishedAt, lastEditAt,
+        postAuthor,
+        message,
+        views || 0,
+        replies?.replies || 0,
+        forwards || 0,
+        reactions?.results[0]?.count || 0
+      ],
+      rowMode: 'array',
+    }
+    await clientPg.query(insertQuery)
+  } else {
+    const updateQuery = {
+      name: 'update-telegrams',
+      text: 'UPDATE telegram_channel_messages SET last_edit_at=$1, ' +
+        'count_view=$2, ' +
+        'count_reply=$3, ' +
+        'count_forward=$4, ' +
+        'count_reaction=$5, ' +
+        'updated_at=$6 ' +
+        'WHERE slug=$7 and telegram_id=$8',
+      values: [
+        lastEditAt,
+        views || 0,
+        replies?.replies || 0,
+        forwards || 0,
+        reactions?.results[0]?.count || 0,
+        Date.now(),
+        slug, id],
+      rowMode: 'array',
+    }
+    await clientPg.query(updateQuery)
+  }
+}
+
+const upsertChannelLog = async (clientPg: Client, slug: string, link: string, isoDate: string, agg: ChannelAggregationByDay) => {
+  // const query = {
+  //   name: 'get-telegram-logs-by-slug-isoDate',
+  //   text: 'SELECT * FROM telegram_logs where slug = $1::text and type= $2::text and iso_date = $3::text',
+  //   values: [slug, TELEGRAM_TYPE.CHANNEL, isoDate],
+  //   rowMode: 'array',
+  // }
+  // const [year, month, day] = isoDate.split('-').map(x => parseInt(x))
+  // const createdDate = convertTimestamp(getFirstMomentOfDate(year, month, day))
+  // let existRecord = await clientPg.query(query)
+  // if (existRecord.rows.length === 0) {
+  //   const insertQuery = {
+  //     name: 'insert-telegram-log',
+  //     text: 'INSERT INTO telegram_logs(slug, link, type, sub_type, iso_date, ' +
+  //       'number_view, ' +
+  //       'number_reaction, ' +
+  //       'number_forward, ' +
+  //       'number_reply, ' +
+  //       'created_at ' +
+  //       ' ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+  //     values: [
+  //       slug, link, TELEGRAM_TYPE.CHANNEL, null, isoDate,
+  //       agg.numberViews,
+  //       agg.numberReaction,
+  //       agg.numberForward,
+  //       agg.numberReply,
+  //       createdDate
+  //     ],
+  //     rowMode: 'array',
+  //   }
+  //   await clientPg.query(insertQuery)
+  // } else {
+  //   const updateQuery = {
+  //     name: 'update-telegrams',
+  //     text: 'UPDATE telegram_logs SET number_reaction=$1, ' +
+  //       'number_view=$2, ' +
+  //       'number_forward=$3, ' +
+  //       'number_reply=$4 ' +
+  //       'WHERE slug=$12 and type=$13  and iso_date=$14',
+  //     values: [
+  //       agg.numberActionChatAddUser,
+  //       agg.numberActionChatDeleteUser,
+  //       agg.numberActionChatJoinedByLink,
+  //       agg.numberActionChatJoinedByRequest,
+  //
+  //       slug, TELEGRAM_TYPE.GROUP, isoDate],
+  //     rowMode: 'array',
+  //   }
+  //   await clientPg.query(updateQuery)
+  // }
 }
 
 crawl()
