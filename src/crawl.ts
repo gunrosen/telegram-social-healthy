@@ -92,67 +92,83 @@ const crawlGroup = async (clientPg: Client, clientTelegram: TelegramClient, slug
     })
 
     for (const msg of msgArr) {
+      let date = 0
+      if (!(msg instanceof Api.MessageEmpty)) {
+        date = msg.date
+      }
+      // date is mandatory, if date does not set, just skip
+      if (date === 0) continue
+
+      // Messages are sorted desc by date.
+      if (date < from) {
+        temp = date
+        break
+      }
+      const isoDate = getIsoDate(convertTimestamp(date))
       if (msg instanceof Message) {
-        const {date, fromId, media} = msg
-        if (date < from) {
-          // Messages are sorted desc by date.
-          temp = date
-          break
-        }
-        const isoDate = getIsoDate(convertTimestamp(date))
+        const {fromId, media} = msg
         let agg: GroupAggregationByDay = mapAggregation.get(isoDate) || new GroupAggregationByDay()
+        checkMedia(agg, media)
+        checkMessage(agg, fromId, botIds)
 
-        // MEDIA
-        if (media instanceof MessageMediaPhoto) {
-          agg.numberMediaPhoto++
-        } else if (media instanceof MessageMediaDocument) {
-          agg.numberMediaDocument++
-        } else if (media instanceof MessageMediaPoll) {
-          agg.numberMediaPoll++
-        }
-
-        // MESSAGE
-        if (fromId instanceof PeerUser) {
-          const {userId} = fromId
-          if (botIds.includes(String(userId))) {
-            agg.numberMessageByBot++
-          } else {
-            agg.numberMessage++
-          }
-        } else if (fromId instanceof PeerChannel) {
-          agg.numberMessageForwardFromChannel++
-        }
         mapAggregation.set(isoDate, agg)
       } else if (msg instanceof MessageService) {
-        const {date, action} = msg
-        if (date < from) {
-          // Messages are sorted desc by date.
-          temp = date
-          break
-        }
-        const isoDate = getIsoDate(convertTimestamp(date))
+        const {action} = msg
         let agg: GroupAggregationByDay = mapAggregation.get(isoDate) || new GroupAggregationByDay()
-
-        // ACTION
-        if (action instanceof MessageActionChatAddUser) {
-          agg.numberActionChatAddUser++
-        } else if (action instanceof MessageActionChatDeleteUser) {
-          agg.numberActionChatDeleteUser++
-        } else if (action instanceof MessageActionChatJoinedByLink) {
-          agg.numberActionChatJoinedByLink++
-        } else if (action instanceof MessageActionChatJoinedByRequest) {
-          agg.numberActionChatJoinedByRequest++
-        } else if (action instanceof MessageActionPinMessage) {
-          agg.numberActionPinMessage++
-        }
+        checkAction(agg, action)
 
         mapAggregation.set(isoDate, agg)
       }
     }
     const oldestMessage = msgArr[msgArr.length - 1]
     temp = (oldestMessage as Message).date
+    if (msgArr.length < 100) {
+      // it means it does not have any history messages
+      break
+    }
   } while (temp >= from)
+  console.log(`Latest message date : ${temp}`)
   console.log(mapAggregation)
+}
+
+
+// ---------------- PRIVATE ZONE ---------------------------------
+// MEDIA
+const checkMedia = (agg: GroupAggregationByDay, media: any) => {
+  if (media instanceof MessageMediaPhoto) {
+    agg.numberMediaPhoto++
+  } else if (media instanceof MessageMediaDocument) {
+    agg.numberMediaDocument++
+  } else if (media instanceof MessageMediaPoll) {
+    agg.numberMediaPoll++
+  }
+}
+const checkMessage = (agg: GroupAggregationByDay, fromId: any, botIds: string[]) => {
+  // MESSAGE
+  if (fromId instanceof PeerUser) {
+    const {userId} = fromId
+    if (botIds.includes(String(userId))) {
+      agg.numberMessageByBot++
+    } else {
+      agg.numberMessage++
+    }
+  } else if (fromId instanceof PeerChannel) {
+    agg.numberMessageForwardFromChannel++
+  }
+}
+
+const checkAction = (agg: GroupAggregationByDay, action: any) => {
+  if (action instanceof MessageActionChatAddUser) {
+    agg.numberActionChatAddUser++
+  } else if (action instanceof MessageActionChatDeleteUser) {
+    agg.numberActionChatDeleteUser++
+  } else if (action instanceof MessageActionChatJoinedByLink) {
+    agg.numberActionChatJoinedByLink++
+  } else if (action instanceof MessageActionChatJoinedByRequest) {
+    agg.numberActionChatJoinedByRequest++
+  } else if (action instanceof MessageActionPinMessage) {
+    agg.numberActionPinMessage++
+  }
 }
 
 crawl()
