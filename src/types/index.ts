@@ -15,6 +15,7 @@ class GroupAggregationByDay {
 }
 
 class ChannelAggregationByDay {
+  numberMessage: number = 0
   numberViews : number = 0
   numberReaction : number = 0
   numberForward : number = 0

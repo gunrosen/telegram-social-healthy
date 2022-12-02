@@ -56,12 +56,14 @@ const crawl = async () => {
     const resTelegramChannelGroup = (await clientPg.query('SELECT slug, type, link, bot FROM telegrams')).rows
     for (const cg of resTelegramChannelGroup) {
       const {slug, type, bot, link} = cg
-      let from = parseInt(await redis.get(`${type}:${slug}:latest`))
-      let to = Math.floor(Date.now() / 1000)
-      // if (type === TELEGRAM_TYPE.GROUP) {
-      //   await crawlGroup(clientPg, clientTelegram, redis, slug, 'https://t.me/test_group_hulk', bot, from, to)
-      // } else
-      if (type === TELEGRAM_TYPE.CHANNEL) {
+      // TODO: Should remove hardcode
+      // let from = parseInt(await redis.get(`${type}:${slug}:latest`))
+      // let to = Math.floor(Date.now() / 1000)
+      const from = 1669360836
+      const to = 1669879236
+      if (type === TELEGRAM_TYPE.GROUP) {
+        await crawlGroup(clientPg, clientTelegram, redis, slug, 'https://t.me/test_group_hulk', bot, from, to)
+      } else if (type === TELEGRAM_TYPE.CHANNEL) {
         await crawlChannel(clientPg, clientTelegram, redis, slug, link, from, to)
       }
     }
@@ -144,6 +146,7 @@ const crawlGroup = async (clientPg: Client, clientTelegram: TelegramClient, redi
   await redis.set(`group:${slug}:latest`, to)
   return temp
 }
+
 const crawlChannel = async (clientPg: Client, clientTelegram: TelegramClient, redis: Redis, slug: string, link: string, from: number, to: number): Promise<number> => {
   const now = Date.now()
   if (from > now) {
@@ -181,17 +184,14 @@ const crawlChannel = async (clientPg: Client, clientTelegram: TelegramClient, re
       }
       const isoDate = getIsoDate(convertTimestamp(date))
       if (msg instanceof Message) {
-        const {message, id, postAuthor, editDate, views, forwards, replies, reactions} = msg
+        const {views, forwards, replies, reactions} = msg
         // Update aggregation of day
         let agg: ChannelAggregationByDay = mapAggregation.get(isoDate) || new ChannelAggregationByDay()
-        agg.numberViews += views || 0
-        agg.numberForward += forwards || 0
-        agg.numberReply += replies?.replies || 0
-        agg.numberReaction += reactions?.results[0]?.count || 0
-        mapAggregation.set(isoDate, agg)
 
         // Upsert Channel Message
-        await upsertChannelMessage(clientPg, slug, link, msg)
+        await upsertChannelMessage(clientPg, slug, link, msg, agg)
+
+        mapAggregation.set(isoDate, agg)
       }
     }
     await wait(300)
@@ -247,7 +247,7 @@ const checkAction = (agg: GroupAggregationByDay, action: any) => {
 
 const upsertGroupLog = async (clientPg: Client, slug: string, link: string, isoDate: string, agg: GroupAggregationByDay) => {
   const query = {
-    name: 'get-telegram-logs-by-slug-isoDate',
+    name: 'get-telegram-group-logs-by-slug-isoDate',
     text: 'SELECT * FROM telegram_logs where slug = $1::text and type= $2::text and iso_date = $3::text',
     values: [slug, TELEGRAM_TYPE.GROUP, isoDate],
     rowMode: 'array',
@@ -257,7 +257,7 @@ const upsertGroupLog = async (clientPg: Client, slug: string, link: string, isoD
   let existRecord = await clientPg.query(query)
   if (existRecord.rows.length === 0) {
     const insertQuery = {
-      name: 'insert-telegram-log',
+      name: 'insert-telegram-group-log',
       text: 'INSERT INTO telegram_logs(slug, link, type, sub_type, iso_date, ' +
         'number_action_chat_add_user, ' +
         'number_action_chat_delete_user, ' +
@@ -292,7 +292,7 @@ const upsertGroupLog = async (clientPg: Client, slug: string, link: string, isoD
     await clientPg.query(insertQuery)
   } else {
     const updateQuery = {
-      name: 'update-telegrams',
+      name: 'update-telegrams-group-log',
       text: 'UPDATE telegram_logs SET number_action_chat_add_user=$1, ' +
         'number_action_chat_delete_user=$2, ' +
         'number_action_chat_joined_by_link=$3, ' +
@@ -324,7 +324,7 @@ const upsertGroupLog = async (clientPg: Client, slug: string, link: string, isoD
   }
 }
 
-const upsertChannelMessage = async (clientPg: Client, slug: string, link: string, msg: Message) => {
+const upsertChannelMessage = async (clientPg: Client, slug: string, link: string, msg: Message, agg: ChannelAggregationByDay) => {
   const {message, id, postAuthor, editDate, views, forwards, replies, reactions, date} = msg
   const publishedAt = convertTimestamp(date)
   const lastEditAt = convertTimestamp(editDate)
@@ -335,6 +335,26 @@ const upsertChannelMessage = async (clientPg: Client, slug: string, link: string
     rowMode: 'array',
   }
   let existRecord = await clientPg.query(query)
+  // Update telegram channel logs
+  if (existRecord.rowCount === 0) {
+    agg.numberMessage += 1
+    agg.numberViews += views || 0
+    agg.numberForward += forwards || 0
+    agg.numberReply += replies?.replies || 0
+    agg.numberReaction += reactions?.results[0]?.count || 0
+  } else {
+    const channelMessage = existRecord.rows[0]
+    const {number_view, number_reaction, number_forward, number_reply} = channelMessage
+    const deltaViews = views - number_view
+    const deltaForward = forwards - number_forward
+    const deltaReply = (replies?.replies || 0) - number_reply
+    const deltaReaction = (reactions?.results[0]?.count || 0) - number_reaction
+    agg.numberViews += deltaViews
+    agg.numberForward += deltaForward
+    agg.numberReply += deltaReply
+    agg.numberReaction += deltaReaction
+  }
+  // Upsert database
   if (existRecord.rows.length === 0) {
     const insertQuery = {
       name: 'insert-telegram-channel-message',
@@ -383,55 +403,58 @@ const upsertChannelMessage = async (clientPg: Client, slug: string, link: string
 }
 
 const upsertChannelLog = async (clientPg: Client, slug: string, link: string, isoDate: string, agg: ChannelAggregationByDay) => {
-  // const query = {
-  //   name: 'get-telegram-logs-by-slug-isoDate',
-  //   text: 'SELECT * FROM telegram_logs where slug = $1::text and type= $2::text and iso_date = $3::text',
-  //   values: [slug, TELEGRAM_TYPE.CHANNEL, isoDate],
-  //   rowMode: 'array',
-  // }
-  // const [year, month, day] = isoDate.split('-').map(x => parseInt(x))
-  // const createdDate = convertTimestamp(getFirstMomentOfDate(year, month, day))
-  // let existRecord = await clientPg.query(query)
-  // if (existRecord.rows.length === 0) {
-  //   const insertQuery = {
-  //     name: 'insert-telegram-log',
-  //     text: 'INSERT INTO telegram_logs(slug, link, type, sub_type, iso_date, ' +
-  //       'number_view, ' +
-  //       'number_reaction, ' +
-  //       'number_forward, ' +
-  //       'number_reply, ' +
-  //       'created_at ' +
-  //       ' ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
-  //     values: [
-  //       slug, link, TELEGRAM_TYPE.CHANNEL, null, isoDate,
-  //       agg.numberViews,
-  //       agg.numberReaction,
-  //       agg.numberForward,
-  //       agg.numberReply,
-  //       createdDate
-  //     ],
-  //     rowMode: 'array',
-  //   }
-  //   await clientPg.query(insertQuery)
-  // } else {
-  //   const updateQuery = {
-  //     name: 'update-telegrams',
-  //     text: 'UPDATE telegram_logs SET number_reaction=$1, ' +
-  //       'number_view=$2, ' +
-  //       'number_forward=$3, ' +
-  //       'number_reply=$4 ' +
-  //       'WHERE slug=$12 and type=$13  and iso_date=$14',
-  //     values: [
-  //       agg.numberActionChatAddUser,
-  //       agg.numberActionChatDeleteUser,
-  //       agg.numberActionChatJoinedByLink,
-  //       agg.numberActionChatJoinedByRequest,
-  //
-  //       slug, TELEGRAM_TYPE.GROUP, isoDate],
-  //     rowMode: 'array',
-  //   }
-  //   await clientPg.query(updateQuery)
-  // }
+  const query = {
+    name: 'get-telegram-channel-logs-by-slug-isoDate',
+    text: 'SELECT * FROM telegram_logs where slug = $1::text and type= $2::text and iso_date = $3::text',
+    values: [slug, TELEGRAM_TYPE.CHANNEL, isoDate],
+    rowMode: 'array',
+  }
+  const [year, month, day] = isoDate.split('-').map(x => parseInt(x))
+  const createdDate = convertTimestamp(getFirstMomentOfDate(year, month, day))
+  let existRecord = await clientPg.query(query)
+  if (existRecord.rows.length === 0) {
+    const insertQuery = {
+      name: 'insert-telegram-channel-log',
+      text: 'INSERT INTO telegram_logs(slug, link, type, sub_type, iso_date, ' +
+        'number_view, ' +
+        'number_reaction, ' +
+        'number_forward, ' +
+        'number_reply, ' +
+        'number_message, ' +
+        'created_at ' +
+        ' ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+      values: [
+        slug, link, TELEGRAM_TYPE.CHANNEL, null, isoDate,
+        agg.numberViews,
+        agg.numberReaction,
+        agg.numberForward,
+        agg.numberReply,
+        agg.numberMessage,
+        createdDate
+      ],
+      rowMode: 'array',
+    }
+    await clientPg.query(insertQuery)
+  } else {
+    const updateQuery = {
+      name: 'update-telegram-channel-logs',
+      text: 'UPDATE telegram_logs SET number_view=$1, ' +
+        'number_reaction=$2, ' +
+        'number_forward=$3, ' +
+        'number_reply=$4, ' +
+        'number_message=$5 ' +
+        'WHERE slug=$6 and type=$7  and iso_date=$8',
+      values: [
+        agg.numberViews,
+        agg.numberReaction,
+        agg.numberForward,
+        agg.numberReply,
+        agg.numberMessage,
+        slug, TELEGRAM_TYPE.GROUP, isoDate],
+      rowMode: 'array',
+    }
+    await clientPg.query(updateQuery)
+  }
 }
 
 crawl()
