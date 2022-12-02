@@ -27,6 +27,7 @@
   "dependencies": {
     "dotenv": "^16.0.3",
     "input": "^1.0.1",
+    "ioredis": "^5.2.4",
     "node-pg-migrate": "^6.2.2",
     "nodemon": "^2.0.20",
     "pg": "^8.8.0",

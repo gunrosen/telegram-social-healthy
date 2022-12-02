@@ -27,10 +27,15 @@ const pad = (n: number): string => {
   return String(n).padStart(2, '0');
 }
 
+const convertIsoDate = (isoDate: string): Date => {
+  return convertTimestamp(Date.parse(isoDate) / 1000)
+}
+
 export {
   convertTimestamp,
   convertDate,
   getFirstMomentOfDate,
   getLastMomentOfDate,
-  getIsoDate
+  getIsoDate,
+  convertIsoDate
 }

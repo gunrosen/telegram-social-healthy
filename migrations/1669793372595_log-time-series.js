@@ -9,6 +9,7 @@ exports.up = pgm => {
         link: {type: 'varchar(1000)', comments: 'Link to telegram. Ex: https://t.me/GameFi_Official'},
         type: {type: 'varchar(50)', notNull: true, comments: 'Type: channel/group'},
         sub_type: {type: 'varchar(50)', comments: 'SubType: sustainable field'},
+        iso_date: {type: 'varchar(50)', comments: 'Example: 2022-12-30'},
 
         number_action_chat_add_user: {type: 'integer'},
         number_action_chat_delete_user: {type: 'integer'},
@@ -31,7 +32,6 @@ exports.up = pgm => {
         created_at: {
             type: 'timestamp',
             notNull: true,
-            default: pgm.func('current_timestamp'),
         },
         compared_old_at: {
             type: 'timestamp',
